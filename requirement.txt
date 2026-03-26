@@ -1,0 +1,18 @@
+# 计算机视觉库
+opencv-python>=4.5.0
+
+# Windows GUI 自动化
+pywin32>=305
+pyautogui>=0.9.53
+
+# 键盘监听
+keyboard>=0.13.5
+
+# DirectX 屏幕截图
+dxcam>=0.0.3
+
+# 显示器信息获取
+screeninfo>=0.8
+
+# 图像处理依赖
+numpy>=1.21.0
