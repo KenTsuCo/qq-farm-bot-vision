@@ -36,6 +36,13 @@ class FarmBotCV:
         self.enable_remove_bug = config.getboolean('self', 'enable_remove_bug')
         self.enable_remove_grass = config.getboolean('self', 'enable_remove_grass')
         self.enable_watering = config.getboolean('self', 'enable_watering')
+        self.enable_daily_free = config.getboolean('self', 'enable_daily_free')
+
+        # 获取好友农场任务的功能配置
+        self.enable_steal = config.getboolean('friend', 'enable_steal')
+        self.enable_help_remove_bugs = config.getboolean('friend', 'enable_help_remove_bugs')
+        self.enable_help_remove_grass = config.getboolean('friend', 'enable_help_remove_grass')
+        self.enable_help_watering = config.getboolean('friend', 'enable_help_watering')
 
         # 获取各项阈值参数
         self.help_remove_bugs_frame_threshold = config.getfloat('threshold', 'help_remove_bugs_frame')
@@ -55,6 +62,14 @@ class FarmBotCV:
         self.remove_all_grass_frame_threshold = config.getfloat('threshold', 'remove_all_grass_frame')
         self.remove_all_bugs_frame_threshold = config.getfloat('threshold', 'remove_all_bugs_frame')
         self.reconnect_frame_threshold = config.getfloat('threshold', 'reconnect_frame')
+        self.can_steal_small_frame_threshold = config.getfloat('threshold', 'can_steal_small_frame')
+        self.can_watering_small_frame_threshold = config.getfloat('threshold', 'can_watering_small_frame')
+        self.can_remove_bugs_small_frame_threshold = config.getfloat('threshold', 'can_remove_bugs_small_frame')
+        self.close_x_small_frame_threshold = config.getfloat('threshold', 'close_x_small_frame')
+        self.shop_red_frame_threshold = config.getfloat('threshold', 'shop_red_frame')
+        self.daily_free_frame_threshold = config.getfloat('threshold', 'daily_free_frame')
+        self.return_farm_frame_threshold = config.getfloat('threshold', 'return_farm_frame')
+
 
 
         self.check_interval = check_interval
@@ -85,6 +100,13 @@ class FarmBotCV:
         self.help_remove_bugs = cv2.imread(r"assert\datasets\icons\help_remove_bugs.jpg")
         self.help_remove_grass = cv2.imread(r"assert\datasets\icons\help_remove_grass.jpg")
         self.help_watering = cv2.imread(r"assert\datasets\icons\help_watering.jpg")
+        self.can_steal_small_frame = cv2.imread(r"assert\datasets\icons\can_steal_small.jpg")
+        self.can_watering_small_frame = cv2.imread(r"assert\datasets\icons\can_watering_small.jpg")
+        self.can_remove_bugs_small_frame = cv2.imread(r"assert\datasets\icons\can_remove_bugs.jpg")
+        self.close_x_small_frame = cv2.imread(r"assert\datasets\icons\close_x_small.jpg")
+        self.shop_red_frame = cv2.imread(r"assert\datasets\icons\shop_red.jpg")
+        self.daily_free_frame = cv2.imread(r"assert\datasets\icons\daily_free.jpg")
+        self.return_farm_frame = cv2.imread(r"assert\datasets\icons\return_farm.jpg")
 
         self.logger.info("机器人初始化完成,准备开始巡检")
         
@@ -223,59 +245,123 @@ class FarmBotCV:
                 return True
         else:
             self.logger.warning("机器人已被配置为【不执行除虫】")
+        
+        # 检测每日礼包是否已领取
+        if self.enable_daily_free == True:
+            if self.now_scene == "home":
+                if self.check_shop_red(game_frame):
+                    if self.check_daily_free(game_frame):
+                        self.check_return_farm(game_frame)
+                    return True
+        else:
+            self.logger.info("机器人已被配置为【不检查领取每日免费礼包】")
         return False
 
     def process_friend_farm(self, game_frame):
         '''
         处理好友农场事件
         '''
-        # 检测好友按钮
-        if self.check_friend_icon(game_frame):
-            self.now_scene = "friend_list"
-            return True
-        if self.now_scene == "friend_list":     # 在好友列表界面
+        if self.now_scene == "friend":    # 在自家农场界面检测好友图标上面是否有弹窗显示可偷
+            if self.enable_steal == True:
+                if self.check_can_steal_small(game_frame):
+                    self.now_scene = "friend_farm"
+                    return True
+            else:
+                self.logger.info("当前配置不偷取好友作物")
+            if self.enable_help_watering == True:
+                if self.check_can_watering_small(game_frame):
+                    self.now_scene = "friend_farm"
+                    return True
+            else:
+                self.logger.info("当前配置不帮助好友浇水")
+            if self.enable_help_remove_bugs == True and self.enable_help_remove_grass == True:
+                if self.check_can_remove_bugs_small(game_frame):
+                    self.now_scene = "friend_farm"
+                    return True
+            else:
+                self.logger.info("当前配置不帮助好友除虫/除草")
+            if self.check_close_x_small(game_frame):    # 好友来农场的弹窗需要关掉
+                self.now_scene = "home"
+                return True
+            # 如果没有弹窗则点开好友列表再次确认
+            if self.check_friend_icon(game_frame):
+                self.now_scene = "friend_list"
+                return True
+
+        # 在好友列表的操作
+        elif self.now_scene == "friend_list":
             # 检测可以偷的图标
-            if self.check_steal_icon(game_frame):
-                self.now_scene = "friend_farm"  # 在好友农场界面
-                return True 
+            if self.enable_steal == True:
+                if self.check_steal_icon(game_frame):
+                    self.now_scene = "friend_farm"  # 在好友农场界面
+                    return True 
+            else:
+                self.logger.info("当前配置不偷取好友作物")
             # 检测可以帮忙除草的图标
-            if self.check_help_remove_grass(game_frame):
-                self.now_scene = "friend_farm"  # 在好友农场界面
-                return True
+            if self.enable_help_remove_grass == True:
+                if self.check_help_remove_grass(game_frame):
+                    self.now_scene = "friend_farm"  # 在好友农场界面
+                    return True
+            else:
+                self.logger.info("当前配置不帮助好友除草")
             # 检测可以帮忙浇水的图标
-            if self.check_help_watering(game_frame):
-                self.now_scene = "friend_farm"  # 在好友农场界面
-                return True
+            if self.enable_help_watering == True:
+                if self.check_help_watering(game_frame):
+                    self.now_scene = "friend_farm"  # 在好友农场界面
+                    return True
+            else:
+                self.logger.info("当前配置不帮助好友浇水")
             # 检测可以帮忙除虫的图标
-            if self.check_help_remove_bugs(game_frame):
-                self.now_scene = "friend_farm"  # 在好友农场界面
-                return True
+            if self.enable_help_remove_bugs == True:
+                if self.check_help_remove_bugs(game_frame):
+                    self.now_scene = "friend_farm"  # 在好友农场界面
+                    return True
+            else:
+                self.logger.info("当前配置不帮助好友除虫")
             # 没有好友任务，点击X返回
             self.check_close_x_icon(game_frame)
             return False
         
-        if self.now_scene == "friend_farm":
-            # 检测一键偷取按钮
-            if self.check_steal_all_icon(game_frame):
-                return True
+        
+        # 在好友农场中的操作
+        elif self.now_scene == "friend_farm":
+            if self.enable_steal == True:
+                #检测一键偷取按钮
+                if self.check_steal_all_icon(game_frame):
+                    return True
+            else:
+                self.logger.info("当前配置不偷取好友作物")
             # 检测单个收获按钮（四方格地无法一键偷取）
-            if self.check_harvest_one(game_frame):
-                return True
+            if self.enable_steal == True:
+                if self.check_harvest_one(game_frame):
+                    return True
+            else:
+                self.logger.info("当前配置不执行收获")
             # 检测是否能帮忙浇水
-            if self.check_watering_all(game_frame):
-                return True
+            if self.enable_help_watering == True:
+                if self.check_watering_all(game_frame):
+                    return True
+            else:
+                self.logger.info("当前配置不帮助好友浇水")
             # 检测是否能帮忙除草
-            if self.check_remove_all_grass(game_frame):
-                return True
+            if self.enable_help_remove_grass == True:
+                if self.check_remove_all_grass(game_frame):
+                    return True
+            else:
+                self.logger.info("当前配置不帮助好友除草")
             # 检测是否能帮忙除虫
-            if self.check_remove_all_bugs(game_frame):
-                return True
+            if self.enable_help_remove_bugs == True:
+                if self.check_remove_all_bugs(game_frame):
+                    return True
+            else:
+                self.logger.info("当前配置不帮助好友除虫")
             # 以上都没有则回家
             if self.check_go_home_icon(game_frame):
                 self.now_scene = "home"
                 return True
-
-        return False
+        else:
+            self.logger.error("scene error")
+            return False
 
 
     def convert_to_screen_coordinate(self, local_coord):
@@ -637,4 +723,123 @@ class FarmBotCV:
         else:
             self.logger.debug(f"未检测到【重新登录】按钮, 最高置信度：{max_val:.4f} (阈值：{threshold})")
             return False
+    
+    def check_can_steal_small(self, game_frame):
+        '''
+        检查好友按钮上方是否有可偷的标志
+        Returns:
+            bool: 是否有可偷的标志
+        '''
+        match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.can_steal_small_frame, threshold=self.can_steal_small_frame_threshold)
+        if match_result is not None:        # 有可偷的标志
+            self.logger.info(f"检测到【好友可偷】的标志,准备点击, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            # 将局部坐标转换为屏幕坐标
+            screen_center = self.convert_to_screen_coordinate(match_result['center'])   # 直接点击中间即可
+            self.click_at_position(screen_center)
+            return True
+        else:
+            self.logger.debug(f"未检测到【好友可偷】的标志, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            return False
+    
+    def check_can_watering_small(self, game_frame):
+        '''
+        检查好友按钮上方是否有可浇水的标志
+        Returns:
+            bool: 是否有可浇水的标志
+        '''
+        match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.can_watering_small_frame, threshold=self.can_watering_small_frame_threshold)
+        if match_result is not None:        # 有可浇水的标志
+            self.logger.info(f"检测到【好友可浇水】的标志,准备点击, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            # 将局部坐标转换为屏幕坐标
+            screen_center = self.convert_to_screen_coordinate(match_result['center'])   # 直接点击中间即可
+            self.click_at_position(screen_center)
+            return True
+        else:
+            self.logger.debug(f"未检测到【好友可浇水】的标志, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            return False
+    
+    def check_can_remove_bugs_small(self, game_frame):
+        '''
+        检查好友按钮上方是否有可除虫的标志
+        Returns:
+            bool: 是否有可除虫的标志
+        '''
+        match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.can_remove_bugs_small_frame, threshold=self.can_remove_bugs_small_frame_threshold)
+        if match_result is not None:        # 有可除虫的标志
+            self.logger.info(f"检测到【好友可除虫】的标志,准备点击, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            # 将局部坐标转换为屏幕坐标
+            screen_center = self.convert_to_screen_coordinate(match_result['center'])   # 直接点击中间即可
+            self.click_at_position(screen_center)
+            return True
+        else:
+            self.logger.debug(f"未检测到【好友可除虫】的标志, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            return False
+
+    def check_close_x_small(self, game_frame):
+        '''
+        检查好友按钮上方是否有可关闭的标志
+        Returns:
+            bool: 是否有可关闭的标志
+        '''
+        match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.close_x_small_frame, threshold=self.close_x_small_frame_threshold)
+        if match_result is not None:        # 有可关闭的标志
+            self.logger.info(f"检测到【好友可关闭】的标志,准备点击, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            # 将局部坐标转换为屏幕坐标
+            screen_center = self.convert_to_screen_coordinate(match_result['center'])   # 直接点击中间即可
+            self.click_at_position(screen_center)
+            return True
+        else:
+            self.logger.debug(f"未检测到【好友可关闭】的标志, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            return False
+
+    def check_shop_red(self, game_frame):
+        '''
+        检查是否有商店红点
+        Returns:
+            bool: 是否有商店红点
+        '''
+        match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.shop_red_frame, threshold=self.shop_red_frame_threshold)
+        if match_result is not None:        # 有商店红点
+            self.logger.info(f"检测到【商店红点】,准备点击, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            # 将局部坐标转换为屏幕坐标
+            screen_center = self.convert_to_screen_coordinate(match_result['center'])   # 直接点击中间即可
+            self.click_at_position(screen_center)
+            return True
+        else:
+            self.logger.debug(f"未检测到【商店红点】, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            return False
+
+    def check_daily_free(self, game_frame):
+        '''
+        检查是否有每日免费礼包
+        '''
+        match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.daily_free_frame, threshold=self.daily_free_frame_threshold)
+        if match_result is not None:        # 有每日免费礼包
+            self.logger.info(f"检测到【每日免费礼包】,准备点击, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            # 将局部坐标转换为屏幕坐标
+            screen_center = self.convert_to_screen_coordinate(match_result['center'])   # 直接点击中间即可
+            self.click_at_position(screen_center)
+            # 弹窗获得化肥礼包后,再点击一下空白处(直接点击一下免费按钮左偏50像素即可)
+            self.click_at_position(screen_center[0]-50, screen_center[1])
+            return True
+        else:
+            self.logger.debug(f"未检测到【每日免费礼包】, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            return False
+
+    def check_return_farm(self, game_frame):
+        '''
+        检查是否有返回农场按钮
+        '''
+        match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.return_farm_frame, threshold=self.return_farm_frame_threshold)
+        if match_result is not None:        # 有返回农场按钮
+            self.logger.info(f"检测到【返回农场】按钮,准备点击, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            # 将局部坐标转换为屏幕坐标
+            screen_center = self.convert_to_screen_coordinate(match_result['center'])   # 直接点击中间即可
+            self.click_at_position(screen_center)
+            return True
+        else:
+            self.logger.debug(f"未检测到【返回农场】按钮, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            return False
+
+
         
