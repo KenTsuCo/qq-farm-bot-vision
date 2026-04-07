@@ -159,6 +159,14 @@ class FarmBotCV:
                 self.logger.error(f"游戏窗口尺寸过小，请调整窗口大小,当前窗口尺寸：{game_frame_w}x{game_frame_h}，至少需满足: 400x800")
                 return
 
+            # 验证是否真正回到了自己的农场
+            # 检查是否存在好友农场特有的元素（如回家按钮），如果存在但场景被标记为home，则修正场景
+            if self.now_scene == "home":
+                # 检查是否仍然在好友农场（存在回家按钮）
+                if self.check_go_home_icon(game_frame):
+                    self.logger.warning("检测到仍在好友农场，修正场景状态")
+                    self.now_scene = "friend_farm"
+            
             # 优先处理自家农场事件
             if self.now_scene == "home":
                 if self.enable_process_self:
@@ -177,7 +185,9 @@ class FarmBotCV:
                 if self.enable_process_friend:
                     if self.is_friend_has_task == False and time.time() - self.start_friend_check_colddown_time < self.friend_colddown_time:
                         self.logger.info(f"上次检查好友农场无任务后, 冷却时间还未达到{self.friend_colddown_time}秒,当前已过去{int(time.time() - self.start_friend_check_colddown_time)}秒,本轮巡检暂不操作")
-                        self.now_scene = "home"
+                        # 验证是否真正回到了自己的农场
+                        if not self.check_go_home_icon(game_frame):
+                            self.now_scene = "home"
                         return
                     self.logger.info(f"正在检查好友农场是否有可执行的任务")
                     if self.process_friend_farm(game_frame):
@@ -185,13 +195,22 @@ class FarmBotCV:
                         return
                     else:
                         self.logger.info("好友农场已无可执行的任务，下一轮巡查将回家查看是否有可执行的任务")
-                        self.now_scene = "home"
-                        self.is_friend_has_task = False
-                        self.start_friend_check_colddown_time = time.time()   # 记录开始冷却时间
+                        # 只有当确实没有回家按钮时，才设置为home
+                        if not self.check_go_home_icon(game_frame):
+                            self.now_scene = "home"
+                            self.is_friend_has_task = False
+                            self.start_friend_check_colddown_time = time.time()   # 记录开始冷却时间
+                        else:
+                            self.logger.warning("仍在好友农场，等待下次尝试返回")
                         
                 else:
                     self.logger.warning("机器人已被配置为【不处理好友农场】")
-                    self.now_scene = "home"
+                    # 验证是否真正回到了自己的农场
+                    if not self.check_go_home_icon(game_frame):
+                        self.now_scene = "home"
+                    else:
+                        self.logger.warning("仍在好友农场，尝试返回")
+                        self.check_go_home_icon(game_frame)
 
         else:
             self.logger.warning("未找到游戏窗口，请检查游戏是否开启并确保窗口在前台")
@@ -357,7 +376,9 @@ class FarmBotCV:
                 self.logger.info("当前配置不帮助好友除虫")
             # 以上都没有则回家
             if self.check_go_home_icon(game_frame):
-                self.now_scene = "home"
+                # 点击回家按钮后，不立即设置为home，等待下次循环验证是否真正返回
+                # 增加延迟，确保页面有时间响应
+                time.sleep(1.5)
                 return True
         else:
             self.logger.error("scene error")
