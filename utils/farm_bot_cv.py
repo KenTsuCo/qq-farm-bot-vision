@@ -1,3 +1,4 @@
+from ast import Break
 import cv2
 import keyboard
 import time
@@ -7,6 +8,7 @@ import configparser
 import random
 from utils.cv_match import cvMatch
 from utils.screen_capture import ScreenCapture
+from utils.window_control import WindowControl
 
 
 class FarmBotCV:
@@ -30,6 +32,7 @@ class FarmBotCV:
         self.enable_process_self = config.getboolean('bot', 'enable_process_self')
         self.enable_process_friend = config.getboolean('bot', 'enable_process_friend')
         self.friend_colddown_time = config.getint('bot', 'friend_colddown_time')
+        self.enable_silence_click = config.getboolean('bot', 'enable_silence_click')
 
         # 获取自己农场的功能配置
         self.enable_harvest = config.getboolean('self', 'enable_harvest')
@@ -37,6 +40,8 @@ class FarmBotCV:
         self.enable_remove_grass = config.getboolean('self', 'enable_remove_grass')
         self.enable_watering = config.getboolean('self', 'enable_watering')
         self.enable_daily_free = config.getboolean('self', 'enable_daily_free')
+        self.enable_plant_seed = config.getboolean('self', 'enable_plant_seed')
+        self.plant_seed_check_interval = config.getint('self', 'plant_seed_check_interval')
 
         # 获取好友农场任务的功能配置
         self.enable_steal = config.getboolean('friend', 'enable_steal')
@@ -69,6 +74,8 @@ class FarmBotCV:
         self.shop_red_frame_threshold = config.getfloat('threshold', 'shop_red_frame')
         self.daily_free_frame_threshold = config.getfloat('threshold', 'daily_free_frame')
         self.return_farm_frame_threshold = config.getfloat('threshold', 'return_farm_frame')
+        self.dog_house_frame_threshold = config.getfloat('threshold', 'dog_house_frame')
+        self.remove_seed_frame_threshold = config.getfloat('threshold', 'remove_seed_frame')
 
 
 
@@ -77,12 +84,17 @@ class FarmBotCV:
         self.pause_status = False
         self.now_scene = "home"     # 判断当前所在的场景
         self.screen_capture = ScreenCapture("QQ经典农场")
+        if self.enable_silence_click:
+            self.window_control = WindowControl("QQ经典农场")
+        else:
+            self.window_control = None
         self.cv_match = cvMatch()
         self.is_friend_has_task = True
         self.start_friend_check_colddown_time = 0
         self.game_frame_w = None
         self.game_frame_h = None
         self.is_today_check_daily_free = False
+        self.last_check_plant_time = 0
 
         
         # 加载匹配图片资源
@@ -110,8 +122,32 @@ class FarmBotCV:
         self.shop_red_frame = cv2.imread(r"assert\datasets\icons\shop_red.jpg")
         self.daily_free_frame = cv2.imread(r"assert\datasets\icons\daily_free.jpg")
         self.return_farm_frame = cv2.imread(r"assert\datasets\icons\return_farm.jpg")
+        self.dog_house_frame = cv2.imread(r"assert\datasets\icons\dog_house.jpg")
+        self.remove_seed_frame = cv2.imread(r"assert\datasets\icons\remove_seed.jpg")
 
-        self.logger.info("机器人初始化完成,准备开始巡检")
+        self.logger.info("机器人初始化完成")
+        if self.enable_silence_click:
+            self.logger.warning("注意：【后台静默点击】功能已被配置启用")
+        if not self.enable_process_friend:
+            self.logger.warning("注意：【处理好友农场】功能已被配置禁用")
+        if not self.enable_process_self:
+            self.logger.warning("注意：【处理自家农场】功能已被配置禁用")
+        if not self.enable_steal:
+            self.logger.warning("注意：【偷菜】功能已被配置禁用")
+        if not self.enable_help_remove_grass:
+            self.logger.warning("注意：【帮助好友除草】功能已被配置禁用")
+        if not self.enable_help_watering:
+            self.logger.warning("注意：【帮助好友浇水】功能已被配置禁用")
+        if not self.enable_remove_bug:
+            self.logger.warning("注意：【帮助好友除虫】功能已被配置禁用")
+        if not self.enable_daily_free:
+            self.logger.warning("注意：【自动领取每日免费礼包】功能已被配置禁用")
+        if not self.enable_plant_seed:
+            self.logger.warning("注意：【自动种植】功能已被配置禁用")
+        self.logger.info(f"【机器人操作间隔】已配置为 {self.check_interval} 秒")
+        self.logger.info(f"【好友巡检间隔】已配置为 {self.friend_colddown_time} 秒")
+        self.logger.info(f"【自动种植检查间隔】已配置为 {self.plant_seed_check_interval} 秒")
+
         
     def start(self):
         # 注册退出热键
@@ -274,6 +310,25 @@ class FarmBotCV:
         else:
             self.logger.warning("机器人已被配置为【不执行除虫】")
         
+        # 自动种植功能
+        if self.enable_plant_seed == True:
+            if time.time() - self.last_check_plant_time > self.plant_seed_check_interval:
+                for field_idx in range(24):
+                    if self.running == False:
+                        exit()
+                    self.logger.info("正在检查是否有空地可以种植")
+                    game_frame = self.screen_capture.get_window_frame()     # 获取游戏画面
+                    if game_frame is None:
+                        self.logger.error(f"游戏画面截取失败，请检查游戏是否开启并确保窗口在前台")
+                        continue
+                    if not self.plant_seed_v1(game_frame, field_idx):
+                        break
+                self.last_check_plant_time = time.time()
+            else:
+                self.logger.info(f"距离上次检查可播种地块时间间隔未达到{self.plant_seed_check_interval}秒，本轮巡检暂不检查，当前间隔时间为：{int(time.time() - self.last_check_plant_time)}秒")
+        
+        time.sleep(0.5)
+        
         # 检测每日礼包是否已领取
         if self.enable_daily_free == True:
             if self.now_scene == "home":
@@ -295,6 +350,7 @@ class FarmBotCV:
         else:
             self.logger.info("机器人已被配置为【不检查领取每日免费礼包】")
             return False
+        
 
     def process_friend_farm(self, game_frame):
         '''
@@ -437,8 +493,19 @@ class FarmBotCV:
         # 加入随机值机制,在目标坐标点基础上随机向四周偏移不超过3像素
         random_x_px = random.randint(-3, 3)
         random_y_px = random.randint(-3, 3)
-        pyautogui.click(screen_coord[0] + random_x_px, screen_coord[1] + random_y_px, duration=duration)
-        self.logger.debug(f"原坐标：{screen_coord}, 随机偏移：{random_x_px}, {random_y_px}, 最终点击坐标：{screen_coord[0] + random_x_px}, {screen_coord[1] + random_y_px}")
+        target_x = int(screen_coord[0] + random_x_px)
+        target_y = int(screen_coord[1] + random_y_px)
+        if self.enable_silence_click == True:
+            # 使用后台窗口控制进行点击
+            success = self.window_control.click(target_x, target_y, duration)
+            if success:
+                self.logger.debug(f"原坐标：{screen_coord}, 随机偏移：{random_x_px}, {random_y_px}, 最终点击坐标：{target_x}, {target_y}")
+            else:
+                self.logger.error(f"后台点击失败，原坐标：{screen_coord}, 随机偏移：{random_x_px}, {random_y_px}, 最终点击坐标：{target_x}, {target_y}")
+
+        else:
+            pyautogui.click(target_x, target_y, duration=duration)
+            self.logger.debug(f"原坐标：{screen_coord}, 随机偏移：{random_x_px}, {random_y_px}, 最终点击坐标：{target_x}, {target_y}")
 
     def check_help_remove_bugs(self, game_frame):
         '''
@@ -858,7 +925,7 @@ class FarmBotCV:
         # 将局部坐标转换为屏幕坐标
         screen_center = self.convert_to_screen_coordinate((shop_x_pos,shop_y_pos))
         self.click_at_position(screen_center)
-        time.sleep(1)   # 等待商店页面加载
+        time.sleep(0.5)   # 等待商店页面加载
         # 进入商店页面后点击免费化肥按钮(453x854->128x401)
         free_button_x_pos = self.game_frame_w * 0.282
         free_button_y_pos = self.game_frame_h * 0.469
@@ -869,11 +936,78 @@ class FarmBotCV:
         blank_y_pos = self.game_frame_h * 0.07
         screen_center = self.convert_to_screen_coordinate((blank_x_pos,blank_y_pos))
         self.click_at_position(screen_center)
-        time.sleep(1)   # 等待空白处点击
+        time.sleep(0.5)   # 等待空白处点击
         # 点击返回农场按钮(453x854->49x142)
         return_button_x_pos = self.game_frame_w * 0.089
         return_button_y_pos = self.game_frame_h * 0.165
         screen_center = self.convert_to_screen_coordinate((return_button_x_pos,return_button_y_pos))
         self.click_at_position(screen_center)
-        time.sleep(1)   # 等待返回农场按钮点击
+        time.sleep(0.5)   # 等待返回农场按钮点击
         return True
+
+
+    def plant_seed_v1(self, game_frame, now_field_idx):
+        '''
+        检查空地并尝试种植种子V1版本
+        '''
+        # 先定位到狗屋，以狗屋坐标作为基准点，使用相对坐标定位到各块地
+        match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.dog_house_frame, threshold=self.dog_house_frame_threshold)
+        if match_result is not None:
+            self.logger.debug(f"检测到【狗屋】，准备定位空地并种植种子, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            dog_house_center = match_result['center']
+            dog_house_x, dog_house_y = dog_house_center[0], dog_house_center[1]
+            FIRST_FIELD_OFFSET_X = 25
+            FIRST_FIELD_OFFSET_Y = 82
+            field_offset_map = {
+                                    0:(0, 0), 1:(37,20),2:(73,38),3:(109,57),
+                                    4:(-35,20),5:(1,36),6:(37,56),7:(72,75),
+                                    8:(-71,39),9:(-39,56),10:(1,75),11:(37,93),
+                                    12:(-109,57),13:(-74,73),14:(-39,93),15:(1,111),
+                                    16:(-147,75),17:(-108,94),18:(-74,111),19:(-34,130),
+                                    20:(-181,93),21:(-146,112),22:(-109,128),23:(-75,149),
+            }
+
+            first_field_pos_x = dog_house_x + FIRST_FIELD_OFFSET_X
+            first_field_pos_y = dog_house_y + FIRST_FIELD_OFFSET_Y
+            field_offset_x, field_offset_y = field_offset_map[now_field_idx]
+            now_field_pos_x = first_field_pos_x + field_offset_x
+            now_field_pos_y = first_field_pos_y + field_offset_y
+            # 转换为屏幕坐标
+            screen_center = self.convert_to_screen_coordinate((now_field_pos_x, now_field_pos_y))
+            self.click_at_position(screen_center)
+            time.sleep(1)
+            
+            # 更新游戏画面
+            game_frame = self.screen_capture.get_window_frame()     # 获取游戏画面
+            if game_frame is None:
+                self.logger.error(f"游戏画面截取失败，请检查游戏是否开启并确保窗口在前台")
+                return True
+            
+            # 检查是否为未扩建的地
+            match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.close_x_frame, threshold=self.close_x_frame_threshold)
+            if match_result is not None:
+                self.logger.info(f"检测到第{now_field_idx+1}块地为【未扩建】的地，后续土地不再巡检")
+                x_close_center = match_result['center']
+                screen_center = self.convert_to_screen_coordinate(x_close_center)
+                self.click_at_position(screen_center)
+                return False
+            else:
+                self.logger.debug(f"未检测关闭按钮, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            
+            # 检查是否可以种植种子
+            match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.remove_seed_frame, threshold=self.remove_seed_frame_threshold)
+            if match_result is not None:
+                self.logger.info(f"第{now_field_idx+1}块地为【已种植】的土地")
+                return True
+            else:
+                self.logger.info(f"第{now_field_idx+1}块地为【未种植】的土地,准备播种")
+                seed_x_pos = now_field_pos_x
+                seed_y_pos = now_field_pos_y + 70
+                screen_center = self.convert_to_screen_coordinate((seed_x_pos,seed_y_pos))
+                self.click_at_position(screen_center)
+                self.logger.info(f"已尝试播种")
+                return True
+
+        else:
+            self.logger.warning(f"未检测到【狗屋】，无法定位空地并种植种子, 最高置信度：{max_val:.4f} (阈值：{threshold})")
+            return False
