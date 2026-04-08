@@ -79,7 +79,10 @@ class FarmBotCV:
         self.screen_capture = ScreenCapture("QQ经典农场")
         self.cv_match = cvMatch()
         self.is_friend_has_task = True
-        self.start_friend_check_colddown_time = None
+        self.start_friend_check_colddown_time = 0
+        self.game_frame_w = None
+        self.game_frame_h = None
+        self.is_today_check_daily_free = False
 
         
         # 加载匹配图片资源
@@ -143,6 +146,7 @@ class FarmBotCV:
 
     def run_cycle(self):
         # 循环处理事件
+        self.logger.debug(f"now sence:{self.now_scene}")
         if self.screen_capture.check_window_exist():
             self.logger.debug("正在获取游戏画面")
             game_frame = self.screen_capture.get_window_frame()     # 获取游戏画面
@@ -158,14 +162,16 @@ class FarmBotCV:
             if game_frame_w < 400 or game_frame_h < 800:
                 self.logger.error(f"游戏窗口尺寸过小，请调整窗口大小,当前窗口尺寸：{game_frame_w}x{game_frame_h}，至少需满足: 400x800")
                 return
+            self.game_frame_w = game_frame_w
+            self.game_frame_h = game_frame_h
 
             # 验证是否真正回到了自己的农场
             # 检查是否存在好友农场特有的元素（如回家按钮），如果存在但场景被标记为home，则修正场景
             if self.now_scene == "home":
                 # 检查是否仍然在好友农场（存在回家按钮）
                 if self.check_go_home_icon(game_frame):
-                    self.logger.warning("检测到仍在好友农场，修正场景状态")
-                    self.now_scene = "friend_farm"
+                    self.logger.warning("检测到仍在好友农场，已再次点击返回自己农场按钮")
+                    self.now_scene = "home"
             
             # 优先处理自家农场事件
             if self.now_scene == "home":
@@ -202,6 +208,7 @@ class FarmBotCV:
                             self.start_friend_check_colddown_time = time.time()   # 记录开始冷却时间
                         else:
                             self.logger.warning("仍在好友农场，等待下次尝试返回")
+                        return 
                         
                 else:
                     self.logger.warning("机器人已被配置为【不处理好友农场】")
@@ -211,6 +218,8 @@ class FarmBotCV:
                     else:
                         self.logger.warning("仍在好友农场，尝试返回")
                         self.check_go_home_icon(game_frame)
+                        self.now_scene = "home"
+                        return 
 
         else:
             self.logger.warning("未找到游戏窗口，请检查游戏是否开启并确保窗口在前台")
@@ -268,13 +277,24 @@ class FarmBotCV:
         # 检测每日礼包是否已领取
         if self.enable_daily_free == True:
             if self.now_scene == "home":
-                if self.check_shop_red(game_frame):
-                    if self.check_daily_free(game_frame):
-                        self.check_return_farm(game_frame)
+                current_hour = time.localtime().tm_hour
+                current_min = time.localtime().tm_min
+                current_sec = time.localtime().tm_sec
+                if self.is_today_check_daily_free == False:
+                    self.logger.info("正在尝试领取【每日免费礼包】")
+                    self.check_daily_free()
+                    self.is_today_check_daily_free = True
                     return True
+                else:
+                    if current_hour == 0 and current_min == 0 and current_sec in [0,1,2,3]:     # 到了每日0点
+                        self.is_today_check_daily_free = False
+                        self.logger.info("已过每日0点，今日免费礼包已刷新")
+                    else:
+                        self.logger.info("今日免费礼包已领取")    
+                    return False   
         else:
             self.logger.info("机器人已被配置为【不检查领取每日免费礼包】")
-        return False
+            return False
 
     def process_friend_farm(self, game_frame):
         '''
@@ -813,40 +833,6 @@ class FarmBotCV:
             self.logger.debug(f"未检测到【好友可关闭】的标志, 最高置信度：{max_val:.4f} (阈值：{threshold})")
             return False
 
-    def check_shop_red(self, game_frame):
-        '''
-        检查是否有商店红点
-        Returns:
-            bool: 是否有商店红点
-        '''
-        match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.shop_red_frame, threshold=self.shop_red_frame_threshold)
-        if match_result is not None:        # 有商店红点
-            self.logger.info(f"检测到【商店红点】,准备点击, 最高置信度：{max_val:.4f} (阈值：{threshold})")
-            # 将局部坐标转换为屏幕坐标
-            screen_center = self.convert_to_screen_coordinate(match_result['center'])   # 直接点击中间即可
-            self.click_at_position(screen_center)
-            return True
-        else:
-            self.logger.debug(f"未检测到【商店红点】, 最高置信度：{max_val:.4f} (阈值：{threshold})")
-            return False
-
-    def check_daily_free(self, game_frame):
-        '''
-        检查是否有每日免费礼包
-        '''
-        match_result, max_val, threshold = self.cv_match.match_template(game_frame, self.daily_free_frame, threshold=self.daily_free_frame_threshold)
-        if match_result is not None:        # 有每日免费礼包
-            self.logger.info(f"检测到【每日免费礼包】,准备点击, 最高置信度：{max_val:.4f} (阈值：{threshold})")
-            # 将局部坐标转换为屏幕坐标
-            screen_center = self.convert_to_screen_coordinate(match_result['center'])   # 直接点击中间即可
-            self.click_at_position(screen_center)
-            # 弹窗获得化肥礼包后,再点击一下空白处(直接点击一下免费按钮左偏50像素即可)
-            self.click_at_position(screen_center[0]-50, screen_center[1])
-            return True
-        else:
-            self.logger.debug(f"未检测到【每日免费礼包】, 最高置信度：{max_val:.4f} (阈值：{threshold})")
-            return False
-
     def check_return_farm(self, game_frame):
         '''
         检查是否有返回农场按钮
@@ -861,6 +847,33 @@ class FarmBotCV:
         else:
             self.logger.debug(f"未检测到【返回农场】按钮, 最高置信度：{max_val:.4f} (阈值：{threshold})")
             return False
-
-
-        
+    
+    def check_daily_free(self):
+        '''
+        检查并尝试领取每日免费礼包
+        '''
+        # 直接通过游戏画面尺寸相对坐标点击商店查看(453x854->411x193)
+        shop_x_pos = self.game_frame_w * 0.907
+        shop_y_pos = self.game_frame_h * 0.225
+        # 将局部坐标转换为屏幕坐标
+        screen_center = self.convert_to_screen_coordinate((shop_x_pos,shop_y_pos))
+        self.click_at_position(screen_center)
+        time.sleep(1)   # 等待商店页面加载
+        # 进入商店页面后点击免费化肥按钮(453x854->128x401)
+        free_button_x_pos = self.game_frame_w * 0.282
+        free_button_y_pos = self.game_frame_h * 0.469
+        screen_center = self.convert_to_screen_coordinate((free_button_x_pos,free_button_y_pos))
+        self.click_at_position(screen_center)
+        # 点击空白处尝试关闭弹窗(453x854->225x61)
+        blank_x_pos = self.game_frame_w * 0.49
+        blank_y_pos = self.game_frame_h * 0.07
+        screen_center = self.convert_to_screen_coordinate((blank_x_pos,blank_y_pos))
+        self.click_at_position(screen_center)
+        time.sleep(1)   # 等待空白处点击
+        # 点击返回农场按钮(453x854->49x142)
+        return_button_x_pos = self.game_frame_w * 0.089
+        return_button_y_pos = self.game_frame_h * 0.165
+        screen_center = self.convert_to_screen_coordinate((return_button_x_pos,return_button_y_pos))
+        self.click_at_position(screen_center)
+        time.sleep(1)   # 等待返回农场按钮点击
+        return True
